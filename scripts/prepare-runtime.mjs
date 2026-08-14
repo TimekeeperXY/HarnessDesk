@@ -110,6 +110,6 @@ await writeFile(join(runtimeRoot, 'manifest.json'), JSON.stringify({
 await archiveRuntime({
   runtimeRoot,
   bundleRoot,
-  runtimeId: `harness-0.1.0-rc.6-node-${nodeVersion}-${platform}-${arch}`,
+  runtimeId: `harness-0.1.0-rc.6-node-${nodeVersion}-${platform}-${arch}-vision-ui-v2`,
 })
 console.log(`Prepared ${platform}/${arch} runtime bundle at ${bundleRoot}`)

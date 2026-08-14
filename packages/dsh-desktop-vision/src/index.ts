@@ -23,6 +23,13 @@ export interface VisionImagePart {
 
 export type VisionPromptPart = VisionTextPart | VisionImagePart
 
+export function encodeVisualAttachmentContext(attachments: readonly unknown[]): VisionTextPart {
+  return {
+    type: 'text',
+    text: `<harnessdesk_visual_attachments encoding="uri-json">${encodeURIComponent(JSON.stringify(attachments))}</harnessdesk_visual_attachments>`,
+  }
+}
+
 export type VisionBridgeErrorCode =
   | 'VISION_BRIDGE_CONFIG_INVALID'
   | 'VISION_BRIDGE_UNAVAILABLE'

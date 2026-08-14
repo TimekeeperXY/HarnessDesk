@@ -1,6 +1,6 @@
 {
   "name": "harnessdesk",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "A community desktop client for DeepSeek Harness",
   "author": "HarnessDesk Community",
   "private": true,
@@ -45,7 +45,6 @@
   "dependencies": {
     "@harnessdesk/dsh-desktop-vision": "workspace:*",
     "electron-updater": "6.8.9",
-    "tar": "7.5.22",
     "yaml": "2.9.0"
   },
   "devDependencies": {
@@ -65,6 +64,7 @@
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "sharp": "0.35.3",
+    "tar": "7.5.22",
     "typescript": "7.0.2",
     "vite": "8.2.1",
     "vitest": "4.1.10",
