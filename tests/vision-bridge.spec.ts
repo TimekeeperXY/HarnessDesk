@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { normalizeVisionEndpoint, transformUnsupportedImagePrompt } from '../packages/dsh-desktop-vision/src/index.js'
+import { encodeVisualAttachmentContext, normalizeVisionEndpoint, transformUnsupportedImagePrompt } from '../packages/dsh-desktop-vision/src/index.js'
 
 describe('LM Studio vision bridge', () => {
   it('only accepts loopback HTTP endpoints', () => {
@@ -19,5 +19,11 @@ describe('LM Studio vision bridge', () => {
     expect(result[1]?.text).toContain('A blue settings window')
     expect(result[1]?.text).toContain('screen.png')
     expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('encodes durable image references separately from model context', () => {
+    const part = encodeVisualAttachmentContext([{ attachmentId: 'image-1', mediaType: 'image/png' }])
+    expect(part.text).toContain('harnessdesk_visual_attachments')
+    expect(decodeURIComponent(part.text.match(/>([^<]+)</)?.[1] ?? '')).toBe('[{"attachmentId":"image-1","mediaType":"image/png"}]')
   })
 })

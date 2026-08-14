@@ -24,7 +24,7 @@ import { RuntimeController } from './runtime/controller.js'
 import { ensurePackagedRuntime } from './runtime/store.js'
 
 const { autoUpdater } = updater
-const APP_VERSION = '0.2.0'
+const APP_VERSION = app.getVersion()
 const HARNESS_VERSION = '0.1.0-rc.6'
 
 let mainWindow: BrowserWindow | undefined

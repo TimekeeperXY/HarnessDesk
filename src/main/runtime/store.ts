@@ -3,7 +3,6 @@ import { spawn } from 'node:child_process'
 import { createReadStream } from 'node:fs'
 import { access, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
-import * as tar from 'tar'
 
 interface RuntimeBundleManifest {
   runtimeId: string
@@ -33,7 +32,8 @@ async function sha256(path: string): Promise<string> {
 
 async function extractWithSystemTar(archive: string, target: string, entryCount: number, onProgress: (value: number) => void): Promise<void> {
   await new Promise<void>((resolvePromise, reject) => {
-    const child = spawn('tar.exe', ['-xvzf', archive, '-C', target], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    const executable = process.platform === 'win32' ? 'tar.exe' : 'tar'
+    const child = spawn(executable, ['-xvzf', archive, '-C', target], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
     let entries = 0
     let carry = ''
     let stderr = ''
@@ -46,7 +46,7 @@ async function extractWithSystemTar(archive: string, target: string, entryCount:
     })
     child.stderr.on('data', chunk => { stderr += chunk.toString() })
     child.once('error', reject)
-    child.once('close', code => code === 0 ? resolvePromise() : reject(new Error(`Windows runtime extraction failed (${code}): ${stderr.trim()}`)))
+    child.once('close', code => code === 0 ? resolvePromise() : reject(new Error(`Runtime extraction failed (${code}): ${stderr.trim()}`)))
   })
 }
 
@@ -75,25 +75,11 @@ export async function ensurePackagedRuntime(options: {
   if (relativePartial.startsWith('..') || isAbsolute(relativePartial)) throw new Error('Unsafe runtime cache path')
   await rm(partial, { recursive: true, force: true })
   await mkdir(partial, { recursive: true })
-  let entries = 0
   options.onProgress(0)
   try {
     if (await sha256(archive) !== manifest.archiveSha256) throw new Error('Bundled Harness runtime failed its integrity check')
     options.onProgress(0.02)
-    if (process.platform === 'win32') {
-      await extractWithSystemTar(archive, partial, entryCount, options.onProgress)
-    } else {
-      await tar.x({
-        cwd: partial,
-        file: archive,
-        strict: true,
-        preservePaths: false,
-        onentry: () => {
-          entries += 1
-          if (entries === 1 || entries % 80 === 0) options.onProgress(Math.min(0.99, 0.02 + (entries / entryCount) * 0.97))
-        },
-      })
-    }
+    await extractWithSystemTar(archive, partial, entryCount, options.onProgress)
     const nodePath = process.platform === 'win32'
       ? join(partial, 'runtime', 'node', 'node.exe')
       : join(partial, 'runtime', 'node', 'bin', 'node')

@@ -17,7 +17,7 @@ export async function patchHarnessRuntime(runtimeApp) {
   host = replaceOnce(
     host,
     'import { ReasoningEffortId, contentHasImage, createUserMessage, errorChain, freezeMessage } from "@deepseek-ai/dsh-llm";',
-    'import { ReasoningEffortId, contentHasImage, createUserMessage, errorChain, freezeMessage } from "@deepseek-ai/dsh-llm";\nimport { transformUnsupportedImagePrompt } from "@harnessdesk/dsh-desktop-vision";',
+    'import { ReasoningEffortId, contentHasImage, createUserMessage, errorChain, freezeMessage } from "@deepseek-ai/dsh-llm";\nimport { encodeVisualAttachmentContext, transformUnsupportedImagePrompt } from "@harnessdesk/dsh-desktop-vision";',
     'host import anchor',
   )
   host = replaceOnce(
@@ -38,11 +38,14 @@ export async function patchHarnessRuntime(runtimeApp) {
 \t\t\t\t\t\t\t\t\tdetails: { reason: "MODEL_DOES_NOT_SUPPORT_IMAGES" }
 \t\t\t\t\t\t\t\t});
 \t\t\t\t\t\t\t\ttry {
-\t\t\t\t\t\t\t\t\tadmittedContent = await transformUnsupportedImagePrompt(content, {
+\t\t\t\t\t\t\t\t\tconst transformedVisualContent = await transformUnsupportedImagePrompt(content, {
 \t\t\t\t\t\t\t\t\t\tenabled: true,
 \t\t\t\t\t\t\t\t\t\tendpoint: process.env.HARNESSDESK_VISION_ENDPOINT ?? "http://127.0.0.1:1234/v1",
 \t\t\t\t\t\t\t\t\t\tmodel: process.env.HARNESSDESK_VISION_MODEL ?? ""
 \t\t\t\t\t\t\t\t\t});
+\t\t\t\t\t\t\t\t\tconst durableVisualContent = await durablePromptContent(ctx, content);
+\t\t\t\t\t\t\t\t\tconst visualAttachments = durableVisualContent.flatMap((part) => part.type === "image" ? [part.attachment] : []);
+\t\t\t\t\t\t\t\t\tadmittedContent = [...transformedVisualContent, encodeVisualAttachmentContext(visualAttachments)];
 \t\t\t\t\t\t\t\t} catch (error) {
 \t\t\t\t\t\t\t\t\tconst reason = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "VISION_BRIDGE_MODEL_FAILED";
 \t\t\t\t\t\t\t\t\treturn err(request, {
@@ -54,10 +57,106 @@ export async function patchHarnessRuntime(runtimeApp) {
 \t\t\t\t\t\t\t}`
   host = replaceOnce(host, rejection, bridged, 'image capability rejection')
   host = replaceOnce(host, 'content: await durablePromptContent(ctx, content),', 'content: await durablePromptContent(ctx, admittedContent),', 'durable prompt content')
+  host = replaceOnce(
+    host,
+    `function referencedImage(events, attachmentId) {
+\tfor (const event of events) {
+\t\tconst found = imageInEvent(event, (ref) => String(ref.attachmentId) === attachmentId);
+\t\tif (found !== void 0) return found;
+\t}
+}`,
+    `function harnessDeskVisualReferenceIn(content, match) {
+\tif (!Array.isArray(content)) return void 0;
+\tconst marker = /<harnessdesk_visual_attachments encoding="uri-json">([^<]+)<\\/harnessdesk_visual_attachments>/g;
+\tfor (const block of content) {
+\t\tif (typeof block !== "object" || block === null || Array.isArray(block) || block.type !== "text" || typeof block.text !== "string") continue;
+\t\tfor (const found of block.text.matchAll(marker)) {
+\t\t\ttry {
+\t\t\t\tconst references = JSON.parse(decodeURIComponent(found[1] ?? ""));
+\t\t\t\tif (!Array.isArray(references)) continue;
+\t\t\t\tfor (const ref of references) if (typeof ref === "object" && ref !== null && match(ref)) return ref;
+\t\t\t} catch {}
+\t\t}
+\t}
+}
+function harnessDeskVisualReferenceInEvent(event, match) {
+\tconst data = event.data;
+\tconst direct = harnessDeskVisualReferenceIn(data.content, match);
+\tif (direct !== void 0) return direct;
+\tif (data.message !== void 0) {
+\t\tconst wrapped = harnessDeskVisualReferenceIn(data.message.content, match);
+\t\tif (wrapped !== void 0) return wrapped;
+\t}
+\tif (data.inserted !== void 0) for (const message of data.inserted) {
+\t\tconst inserted = harnessDeskVisualReferenceIn(message.content, match);
+\t\tif (inserted !== void 0) return inserted;
+\t}
+}
+function referencedImage(events, attachmentId) {
+\tfor (const event of events) {
+\t\tconst match = (ref) => String(ref.attachmentId) === attachmentId;
+\t\tconst found = imageInEvent(event, match) ?? harnessDeskVisualReferenceInEvent(event, match);
+\t\tif (found !== void 0) return found;
+\t}
+}`,
+    'visual attachment authorization',
+  )
   await writeFile(hostPath, host)
 
   const clientPath = join(runtimeApp, 'node_modules', '@deepseek-ai', 'dsh-client-ui-conversation', 'lib', 'client.js')
   let client = await readFile(clientPath, 'utf8')
+  client = replaceOnce(
+    client,
+    `\t\tfunction contentParts(content) {
+\t\t\tconst texts = [];
+\t\t\tconst images = [];
+\t\t\tconst rest = [];
+\t\t\tfor (const block of content) {
+\t\t\t\tconst b = block;
+\t\t\t\tif (b.type === "text" && typeof b.text === "string") texts.push(b.text);
+\t\t\t\telse if (b.type === "image" && b.attachment !== void 0) images.push({ attachment: b.attachment });
+\t\t\t\telse rest.push(block);
+\t\t\t}
+\t\t\treturn {
+\t\t\t\ttext: texts.join(""),
+\t\t\t\timages,
+\t\t\t\trest
+\t\t\t};
+\t\t}`,
+    `\t\tfunction harnessDeskVisualProjection(text) {
+\t\t\tconst images = [];
+\t\t\tconst attachmentMarker = /<harnessdesk_visual_attachments encoding="uri-json">([^<]+)<\\/harnessdesk_visual_attachments>/g;
+\t\t\ttext = text.replace(attachmentMarker, (_whole, encoded) => {
+\t\t\t\ttry {
+\t\t\t\t\tconst references = JSON.parse(decodeURIComponent(encoded));
+\t\t\t\t\tif (Array.isArray(references)) for (const attachment of references) {
+\t\t\t\t\t\tif (typeof attachment === "object" && attachment !== null && typeof attachment.attachmentId === "string") images.push({ attachment });
+\t\t\t\t\t}
+\t\t\t\t} catch {}
+\t\t\t\treturn "";
+\t\t\t});
+\t\t\ttext = text.replace(/<harnessdesk_visual_context\\b[^>]*>[\\s\\S]*?<\\/harnessdesk_visual_context>/g, "");
+\t\t\treturn { text: text.trim(), images };
+\t\t}
+\t\tfunction contentParts(content) {
+\t\t\tconst texts = [];
+\t\t\tconst images = [];
+\t\t\tconst rest = [];
+\t\t\tfor (const block of content) {
+\t\t\t\tconst b = block;
+\t\t\t\tif (b.type === "text" && typeof b.text === "string") texts.push(b.text);
+\t\t\t\telse if (b.type === "image" && b.attachment !== void 0) images.push({ attachment: b.attachment });
+\t\t\t\telse rest.push(block);
+\t\t\t}
+\t\t\tconst visual = harnessDeskVisualProjection(texts.join(""));
+\t\t\treturn {
+\t\t\t\ttext: visual.text,
+\t\t\t\timages: [...images, ...visual.images],
+\t\t\t\trest
+\t\t\t};
+\t\t}`,
+    'user message visual projection',
+  )
   client = replaceOnce(
     client,
     '\t\t\t\tcase "MODEL_DOES_NOT_SUPPORT_IMAGES": return t("image.modelUnsupported");',
