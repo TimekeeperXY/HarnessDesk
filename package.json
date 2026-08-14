@@ -1,6 +1,6 @@
 {
   "name": "harnessdesk",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "A community desktop client for DeepSeek Harness",
   "author": "HarnessDesk Community",
   "private": true,
@@ -21,7 +21,7 @@
     ]
   },
   "scripts": {
-    "dev": "pnpm run build:bridge && concurrently -k \"vite\" \"tsc -p tsconfig.electron.json --watch --preserveWatchOutput\" \"wait-on tcp:5173 file:dist-electron/main/index.js && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "dev": "pnpm run build:bridge && node scripts/dev.mjs",
     "build": "pnpm run clean && pnpm run build:bridge && pnpm run build:vision && pnpm run build:electron && pnpm run build:renderer",
     "build:bridge": "tsc -b packages/dsh-desktop-bridge/tsconfig.json --force",
     "build:vision": "tsc -b packages/dsh-desktop-vision/tsconfig.json --force",
@@ -37,9 +37,9 @@
     "prepare:icons": "node scripts/prepare-icons.mjs",
     "checksums": "node scripts/checksums.mjs",
     "package": "pnpm run build && pnpm run prepare:icons && pnpm run prepare:runtime && electron-builder --dir",
-    "package:win": "pnpm run build && pnpm run prepare:icons && pnpm run prepare:runtime -- --platform win32 --arch x64 && electron-builder --win nsis --x64",
-    "package:mac:arm64": "pnpm run build && pnpm run prepare:icons && pnpm run prepare:runtime -- --platform darwin --arch arm64 && electron-builder --mac dmg zip --arm64",
-    "package:mac:x64": "pnpm run build && pnpm run prepare:icons && pnpm run prepare:runtime -- --platform darwin --arch x64 && electron-builder --mac dmg zip --x64",
+    "package:win": "pnpm run build && pnpm run prepare:icons && pnpm run prepare:runtime -- --platform win32 --arch x64 && electron-builder --win nsis --x64 --publish never",
+    "package:mac:arm64": "pnpm run build && pnpm run prepare:icons && pnpm run prepare:runtime -- --platform darwin --arch arm64 && electron-builder --mac dmg zip --arm64 --publish never",
+    "package:mac:x64": "pnpm run build && pnpm run prepare:icons && pnpm run prepare:runtime -- --platform darwin --arch x64 && electron-builder --mac dmg zip --x64 --publish never",
     "e2e": "playwright test"
   },
   "dependencies": {

@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { DesktopConfig, Locale, VisionBridgeConfig, WindowBounds } from '../shared/contracts.js'
+import type { DesktopConfig, Locale, TtsConfig, TtsModel, VisionBridgeConfig, WindowBounds } from '../shared/contracts.js'
 
 const CONFIG_FILENAME = 'desktop-config.json'
 
@@ -16,6 +16,15 @@ export function defaultConfig(systemLocale: string): DesktopConfig {
     windowBounds: { width: 1180, height: 780 },
     updateChecksEnabled: false,
     visionBridge: { enabled: true, endpoint: 'http://127.0.0.1:1234/v1', model: '' },
+    tts: {
+      enabled: false,
+      autoPlay: false,
+      endpoint: 'https://api.xiaomimimo.com/v1',
+      model: 'mimo-v2.5-tts',
+      voice: 'mimo_default',
+      style: '',
+      format: 'wav',
+    },
   }
 }
 
@@ -25,6 +34,20 @@ function validVisionBridge(value: unknown): value is VisionBridgeConfig {
   return typeof candidate.enabled === 'boolean'
     && typeof candidate.endpoint === 'string'
     && typeof candidate.model === 'string'
+}
+
+const TTS_MODELS: readonly TtsModel[] = ['mimo-v2.5-tts', 'mimo-v2.5-tts-voicedesign', 'mimo-v2.5-tts-voiceclone']
+
+function validTtsConfig(value: unknown): value is TtsConfig {
+  if (typeof value !== 'object' || value === null) return false
+  const candidate = value as Partial<TtsConfig>
+  return typeof candidate.enabled === 'boolean'
+    && typeof candidate.autoPlay === 'boolean'
+    && typeof candidate.endpoint === 'string'
+    && TTS_MODELS.includes(candidate.model as TtsModel)
+    && typeof candidate.voice === 'string'
+    && typeof candidate.style === 'string'
+    && (candidate.format === 'mp3' || candidate.format === 'wav')
 }
 
 function validBounds(value: unknown): value is WindowBounds {
@@ -52,6 +75,7 @@ export function migrateConfig(raw: unknown, systemLocale: string): DesktopConfig
     windowBounds: validBounds(source.windowBounds) ? source.windowBounds : fallback.windowBounds,
     updateChecksEnabled: source.updateChecksEnabled === true,
     visionBridge: validVisionBridge(source.visionBridge) ? source.visionBridge : fallback.visionBridge,
+    tts: validTtsConfig(source.tts) ? source.tts : fallback.tts,
   }
 }
 

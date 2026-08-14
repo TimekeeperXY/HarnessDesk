@@ -15,6 +15,7 @@ export interface DesktopConfig {
   windowBounds: WindowBounds
   updateChecksEnabled: boolean
   visionBridge: VisionBridgeConfig
+  tts: TtsConfig
 }
 
 export interface VisionBridgeConfig {
@@ -26,6 +27,40 @@ export interface VisionBridgeConfig {
 export interface VisionBridgeTestResult extends OperationResult {
   models?: string[]
   selectedModel?: string
+}
+
+export type TtsModel = 'mimo-v2.5-tts' | 'mimo-v2.5-tts-voicedesign' | 'mimo-v2.5-tts-voiceclone'
+
+export type TtsAudioFormat = 'mp3' | 'wav'
+
+export interface TtsConfig {
+  enabled: boolean
+  autoPlay: boolean
+  endpoint: string
+  model: TtsModel
+  voice: string
+  style: string
+  format: TtsAudioFormat
+}
+
+export interface TtsSynthesisResult extends OperationResult {
+  audioBase64?: string
+  format?: TtsAudioFormat
+}
+
+export type TtsStreamEventType = 'started' | 'chunk' | 'ended' | 'error'
+
+export interface TtsStreamEvent {
+  streamId: string
+  type: TtsStreamEventType
+  audioBase64?: string
+  sampleRate?: number
+  error?: string
+}
+
+export interface TtsStreamStartResult extends OperationResult {
+  streamId?: string
+  sampleRate?: number
 }
 
 export type RuntimePhase = 'idle' | 'preparing' | 'starting' | 'ready' | 'stopping' | 'failed'
@@ -78,6 +113,12 @@ export interface HarnessDeskApi {
   setLocale(locale: Locale): Promise<DesktopConfig>
   setVisionBridge(config: VisionBridgeConfig): Promise<DesktopConfig>
   testVisionBridge(config: VisionBridgeConfig): Promise<VisionBridgeTestResult>
+  getTtsConfig(): Promise<TtsConfig>
+  setTtsConfig(config: TtsConfig, apiKey?: string): Promise<DesktopConfig>
+  testTts(config: TtsConfig, apiKey?: string): Promise<TtsSynthesisResult>
+  speakText(text: string): Promise<TtsSynthesisResult>
+  startTtsStream(text: string): Promise<TtsStreamStartResult>
+  stopTtsStream(streamId: string): Promise<OperationResult>
   selectWorkspace(): Promise<string | undefined>
   completeOnboarding(input: OnboardingInput): Promise<OperationResult>
   getRuntimeState(): Promise<RuntimeState>
@@ -86,9 +127,12 @@ export interface HarnessDeskApi {
   showHarness(): Promise<OperationResult>
   showDiagnostics(): Promise<void>
   showVisionSettings(): Promise<void>
+  showTtsSettings(): Promise<void>
   getDiagnostics(): Promise<Diagnostics>
   openLogs(): Promise<void>
   openDataDirectory(): Promise<void>
   checkForUpdates(): Promise<OperationResult>
   onRuntimeState(listener: (state: RuntimeState) => void): () => void
+  onTtsConfig(listener: (config: TtsConfig) => void): () => void
+  onTtsStream(listener: (event: TtsStreamEvent) => void): () => void
 }

@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { credentialPath, writeDeepSeekCredential } from '../src/main/credentials.js'
+import { credentialPath, mimoCredentialPath, readMiMoCredential, writeDeepSeekCredential, writeMiMoCredential } from '../src/main/credentials.js'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -22,5 +22,14 @@ describe('Harness credentials', () => {
     const root = await mkdtemp(join(tmpdir(), 'harnessdesk-credentials-'))
     roots.push(root)
     await expect(writeDeepSeekCredential(root, 'sk-a\nmalicious: value')).rejects.toThrow('unsupported characters')
+  })
+
+  it('stores MiMo credentials separately and reads them back', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'harnessdesk-mimo-credentials-'))
+    roots.push(root)
+    await writeMiMoCredential(root, 'mimo-secret-value')
+    expect(mimoCredentialPath(root)).not.toBe(credentialPath(root))
+    expect(await readMiMoCredential(root)).toBe('mimo-secret-value')
+    expect(await readFile(mimoCredentialPath(root), 'utf8')).toContain('MIMO_API_KEY: mimo-secret-value')
   })
 })

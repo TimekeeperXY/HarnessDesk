@@ -12,12 +12,22 @@ import {
   ImageSquare,
   PlugsConnected,
   ShieldCheck,
+  SpeakerHigh,
   Warning,
 } from '@phosphor-icons/react'
-import type { DesktopConfig, Diagnostics, Locale, RuntimeState, VisionBridgeConfig } from '../shared/contracts.js'
+import type { DesktopConfig, Diagnostics, Locale, RuntimeState, TtsConfig, TtsModel, TtsSynthesisResult, VisionBridgeConfig } from '../shared/contracts.js'
 import { translator } from './i18n.js'
 
 const iconProps = { size: 20, weight: 'regular' as const }
+
+function createTtsAudio(result: TtsSynthesisResult): { audio: HTMLAudioElement; url: string } {
+  if (!result.audioBase64) throw new Error('MiMo TTS returned empty audio')
+  const binary = atob(result.audioBase64.replace(/\s/g, ''))
+  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0))
+  const type = result.format === 'wav' ? 'audio/wav' : 'audio/mpeg'
+  const url = URL.createObjectURL(new Blob([bytes], { type }))
+  return { audio: new Audio(url), url }
+}
 
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
@@ -299,6 +309,106 @@ function VisionSettingsPage({ locale, initial, onSaved }: { locale: Locale; init
   )
 }
 
+const ttsVoices = ['mimo_default', '冰糖', '茉莉', '苏打', '白桦', 'Mia', 'Chloe', 'Milo', 'Dean']
+const ttsModels: TtsModel[] = ['mimo-v2.5-tts', 'mimo-v2.5-tts-voicedesign', 'mimo-v2.5-tts-voiceclone']
+
+function VoiceSettingsPage({ locale, initial, onSaved }: { locale: Locale; initial: TtsConfig; onSaved(config: DesktopConfig): void }) {
+  const t = translator(locale)
+  const [value, setValue] = useState(initial)
+  const [apiKey, setApiKey] = useState('')
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+  const [testing, setTesting] = useState(false)
+  const test = async (): Promise<void> => {
+    setTesting(true)
+    setMessage('')
+    setError('')
+    const result = await window.harnessdesk.testTts(value, apiKey || undefined)
+    setTesting(false)
+    if (!result.ok || !result.audioBase64) {
+      setError(result.error ?? t('voiceFailed'))
+      return
+    }
+    const { audio, url } = createTtsAudio(result)
+    audio.addEventListener('ended', () => URL.revokeObjectURL(url), { once: true })
+    try {
+      await audio.play()
+      setMessage(t('voiceTested'))
+    } catch (cause) {
+      URL.revokeObjectURL(url)
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+  const save = async (): Promise<void> => {
+    setMessage('')
+    setError('')
+    try {
+      const config = await window.harnessdesk.setTtsConfig(value, apiKey || undefined)
+      onSaved(config)
+      setValue(config.tts)
+      setApiKey('')
+      setMessage(t('voiceSaved'))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+  return (
+    <div className="page-block diagnostics-page voice-page">
+      <SpeakerHigh size={34} weight="regular" className="page-icon" />
+      <h1>{t('voiceTitle')}</h1>
+      <p className="lead">{t('voiceBody')}</p>
+      <label className="toggle-row">
+        <input type="checkbox" checked={value.enabled} onChange={event => setValue({ ...value, enabled: event.target.checked })} />
+        <span aria-hidden="true"><i /></span>
+        <strong>{t('voiceEnabled')}</strong>
+      </label>
+      <label className="toggle-row">
+        <input type="checkbox" checked={value.autoPlay} onChange={event => setValue({ ...value, autoPlay: event.target.checked })} />
+        <span aria-hidden="true"><i /></span>
+        <strong>{t('voiceAutoPlay')}</strong>
+      </label>
+      <div className="vision-fields">
+        <label className="input-block">
+          <span>{t('voiceEndpoint')}</span>
+          <input value={value.endpoint} spellCheck={false} onChange={event => setValue({ ...value, endpoint: event.target.value })} />
+        </label>
+        <label className="input-block">
+          <span>{t('voiceApiKey')}</span>
+          <input type="password" autoComplete="off" value={apiKey} placeholder={t('voiceKeyPlaceholder')} onChange={event => setApiKey(event.target.value)} />
+          <small>{t('voiceKeyHelp')}</small>
+        </label>
+      </div>
+      <div className="vision-fields">
+        <label className="input-block">
+          <span>{t('voiceModel')}</span>
+          <select value={value.model} onChange={event => setValue({ ...value, model: event.target.value as TtsModel })}>
+            {ttsModels.map(model => <option value={model} key={model}>{model}</option>)}
+          </select>
+        </label>
+        <label className="input-block">
+          <span>{t('voicePreset')}</span>
+          <select value={value.voice} disabled={value.model !== 'mimo-v2.5-tts'} onChange={event => setValue({ ...value, voice: event.target.value })}>
+            {ttsVoices.map(voice => <option value={voice} key={voice}>{voice}</option>)}
+          </select>
+        </label>
+      </div>
+      <label className="input-block">
+        <span>{t('voiceStyle')}</span>
+        <input value={value.style} placeholder={t('voiceStylePlaceholder')} onChange={event => setValue({ ...value, style: event.target.value })} />
+        <small>{value.model === 'mimo-v2.5-tts-voiceclone' ? t('voiceCloneReserved') : value.model === 'mimo-v2.5-tts-voicedesign' ? t('voiceDesignReserved') : t('voiceStyleHelp')}</small>
+      </label>
+      <p className="privacy-note"><ShieldCheck {...iconProps} />{t('voicePrivacy')}</p>
+      {message && <p className="success-note" role="status">{message}</p>}
+      {error && <p className="field-error" role="alert">{error}</p>}
+      <div className="diagnostic-actions">
+        <button className="secondary" onClick={() => { void test() }} disabled={testing}><SpeakerHigh {...iconProps} />{testing ? t('voiceTesting') : t('voiceTest')}</button>
+        <button className="primary" onClick={() => { void save() }}>{t('voiceSave')}</button>
+        <button className="text-button" onClick={() => { void window.harnessdesk.showHarness() }}><ArrowLeft {...iconProps} />{t('returnHarness')}</button>
+      </div>
+    </div>
+  )
+}
+
 export function App() {
   const [config, setConfig] = useState<DesktopConfig>()
   const [step, setStep] = useState(0)
@@ -333,6 +443,7 @@ export function App() {
   }
   if (view === 'diagnostics') return <Shell locale={locale} onLocale={setLocale}><DiagnosticsPage locale={locale} /></Shell>
   if (view === 'vision') return <Shell locale={locale} onLocale={setLocale}><VisionSettingsPage locale={locale} initial={config.visionBridge} onSaved={setConfig} /></Shell>
+  if (view === 'voice') return <Shell locale={locale} onLocale={setLocale}><VoiceSettingsPage locale={locale} initial={config.tts} onSaved={setConfig} /></Shell>
 
   const launch = async (): Promise<void> => {
     setBusy(true)

@@ -1,11 +1,17 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { HarnessDeskApi, Locale, OnboardingInput, RuntimeState, VisionBridgeConfig } from '../shared/contracts.js'
+import type { HarnessDeskApi, Locale, OnboardingInput, RuntimeState, TtsConfig, TtsStreamEvent, VisionBridgeConfig } from '../shared/contracts.js'
 
 const api: HarnessDeskApi = {
   getConfig: () => ipcRenderer.invoke('desktop:get-config'),
   setLocale: (locale: Locale) => ipcRenderer.invoke('desktop:set-locale', locale),
   setVisionBridge: (config: VisionBridgeConfig) => ipcRenderer.invoke('desktop:set-vision-bridge', config),
   testVisionBridge: (config: VisionBridgeConfig) => ipcRenderer.invoke('desktop:test-vision-bridge', config),
+  getTtsConfig: () => ipcRenderer.invoke('desktop:get-tts-config'),
+  setTtsConfig: (config: TtsConfig, apiKey?: string) => ipcRenderer.invoke('desktop:set-tts-config', config, apiKey),
+  testTts: (config: TtsConfig, apiKey?: string) => ipcRenderer.invoke('desktop:test-tts', config, apiKey),
+  speakText: (text: string) => ipcRenderer.invoke('desktop:speak-text', text),
+  startTtsStream: (text: string) => ipcRenderer.invoke('desktop:start-tts-stream', text),
+  stopTtsStream: (streamId: string) => ipcRenderer.invoke('desktop:stop-tts-stream', streamId),
   selectWorkspace: () => ipcRenderer.invoke('desktop:select-workspace'),
   completeOnboarding: (input: OnboardingInput) => ipcRenderer.invoke('desktop:complete-onboarding', input),
   getRuntimeState: () => ipcRenderer.invoke('runtime:get-state'),
@@ -14,6 +20,7 @@ const api: HarnessDeskApi = {
   showHarness: () => ipcRenderer.invoke('runtime:show-harness'),
   showDiagnostics: () => ipcRenderer.invoke('desktop:show-diagnostics'),
   showVisionSettings: () => ipcRenderer.invoke('desktop:show-vision-settings'),
+  showTtsSettings: () => ipcRenderer.invoke('desktop:show-tts-settings'),
   getDiagnostics: () => ipcRenderer.invoke('desktop:get-diagnostics'),
   openLogs: () => ipcRenderer.invoke('desktop:open-logs'),
   openDataDirectory: () => ipcRenderer.invoke('desktop:open-data'),
@@ -22,6 +29,16 @@ const api: HarnessDeskApi = {
     const handler = (_event: Electron.IpcRendererEvent, state: RuntimeState): void => listener(state)
     ipcRenderer.on('runtime:state', handler)
     return () => ipcRenderer.off('runtime:state', handler)
+  },
+  onTtsConfig: (listener: (config: TtsConfig) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, config: TtsConfig): void => listener(config)
+    ipcRenderer.on('tts:config', handler)
+    return () => ipcRenderer.off('tts:config', handler)
+  },
+  onTtsStream: (listener: (event: TtsStreamEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, value: TtsStreamEvent): void => listener(value)
+    ipcRenderer.on('tts:stream', handler)
+    return () => ipcRenderer.off('tts:stream', handler)
   },
 }
 

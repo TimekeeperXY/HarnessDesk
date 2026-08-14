@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, normalize, resolve } from 'node:path'
@@ -16,12 +17,14 @@ import {
 } from 'electron'
 import updater from 'electron-updater'
 import { normalizeVisionEndpoint, testVisionBridge } from '@harnessdesk/dsh-desktop-vision'
-import type { DesktopConfig, Diagnostics, Locale, OnboardingInput, OperationResult, VisionBridgeConfig, VisionBridgeTestResult } from '../shared/contracts.js'
+import type { DesktopConfig, Diagnostics, Locale, OnboardingInput, OperationResult, TtsConfig, TtsStreamEvent, TtsStreamStartResult, TtsSynthesisResult, VisionBridgeConfig, VisionBridgeTestResult } from '../shared/contracts.js'
 import { ConfigStore } from './config-store.js'
-import { writeDeepSeekCredential } from './credentials.js'
+import { writeDeepSeekCredential, writeMiMoCredential } from './credentials.js'
 import { AppLogger } from './logger.js'
 import { RuntimeController } from './runtime/controller.js'
 import { ensurePackagedRuntime } from './runtime/store.js'
+import { harnessTtsCss, harnessTtsScript } from './tts-injection.js'
+import { normalizeTtsEndpoint, streamMiMoSpeech, synthesizeMiMoSpeech } from './tts.js'
 
 const { autoUpdater } = updater
 const APP_VERSION = app.getVersion()
@@ -38,6 +41,8 @@ let previousActiveTurns = 0
 let quitting = false
 let shellUrl = ''
 let harnessChromeCssKey: string | undefined
+let harnessTtsCssKey: string | undefined
+const ttsStreams = new Map<string, { ownerId: number; controller: AbortController }>()
 
 const harnessChromeCss = `
   html { box-sizing: border-box !important; padding-top: 56px !important; background: #f7f9fd !important; }
@@ -75,6 +80,7 @@ function copy(locale: Locale) {
     harness: '返回 Harness',
     diagnostics: '诊断信息',
     vision: 'LM Studio 视觉桥',
+    voice: 'MiMo 语音',
     logs: '打开日志目录',
     data: '打开数据目录',
     updates: '检查更新',
@@ -93,6 +99,7 @@ function copy(locale: Locale) {
     harness: 'Return to Harness',
     diagnostics: 'Diagnostics',
     vision: 'LM Studio Vision Bridge',
+    voice: 'MiMo Voice',
     logs: 'Open Logs',
     data: 'Open Data Folder',
     updates: 'Check for Updates',
@@ -120,9 +127,14 @@ function localShellTarget(view = 'home'): string {
 
 async function loadShell(view = 'home'): Promise<void> {
   if (mainWindow === undefined) return
+  stopAllTtsStreams()
   if (harnessChromeCssKey !== undefined) {
     await mainWindow.webContents.removeInsertedCSS(harnessChromeCssKey).catch(() => undefined)
     harnessChromeCssKey = undefined
+  }
+  if (harnessTtsCssKey !== undefined) {
+    await mainWindow.webContents.removeInsertedCSS(harnessTtsCssKey).catch(() => undefined)
+    harnessTtsCssKey = undefined
   }
   const dev = process.env.VITE_DEV_SERVER_URL
   if (dev !== undefined) {
@@ -134,6 +146,11 @@ async function loadShell(view = 'home'): Promise<void> {
     await mainWindow.loadFile(path, { query: { view } })
   }
   mainWindow.show()
+}
+
+function stopAllTtsStreams(): void {
+  for (const stream of ttsStreams.values()) stream.controller.abort()
+  ttsStreams.clear()
 }
 
 function isAllowedNavigation(rawUrl: string): boolean {
@@ -161,10 +178,25 @@ function assertShellSender(event: IpcMainInvokeEvent): void {
   }
 }
 
+function assertTrustedSender(event: IpcMainInvokeEvent): void {
+  const rawUrl = event.senderFrame?.url
+  if (rawUrl === undefined) throw new Error('IPC sender has no frame')
+  try {
+    const sender = new URL(rawUrl)
+    if (process.env.VITE_DEV_SERVER_URL !== undefined && sender.origin === shellUrl) return
+    if (sender.protocol === 'file:' && new URL(shellUrl).protocol === 'file:' && sender.pathname === new URL(shellUrl).pathname) return
+    if (harnessUrl !== undefined && sender.origin === harnessUrl.origin) return
+  } catch { /* reject below */ }
+  throw new Error('IPC is restricted to HarnessDesk and the local Harness UI')
+}
+
 async function showHarness(): Promise<OperationResult> {
   if (mainWindow === undefined || harnessUrl === undefined) return { ok: false, error: 'Harness is not ready' }
+  stopAllTtsStreams()
   await mainWindow.loadURL(harnessUrl.href)
   harnessChromeCssKey = await mainWindow.webContents.insertCSS(harnessChromeCss)
+  harnessTtsCssKey = await mainWindow.webContents.insertCSS(harnessTtsCss)
+  await mainWindow.webContents.executeJavaScript(harnessTtsScript)
   mainWindow.show()
   return { ok: true }
 }
@@ -206,26 +238,45 @@ async function startRuntimeOnce(): Promise<OperationResult> {
   }
 }
 
+function updateTrayMenu(): void {
+  if (tray === undefined) return
+  const labels = copy(configStore.get().locale)
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: labels.show, click: () => {
+      if (mainWindow?.isMinimized()) mainWindow.restore()
+      mainWindow?.show()
+      mainWindow?.focus()
+    } },
+    { label: labels.harness, click: () => { void showHarness() } },
+    { label: labels.voice, click: () => { void loadShell('voice') } },
+    { type: 'separator' },
+    { label: labels.quit, click: () => { void quitApplication() } },
+  ]))
+}
+
 function createTray(): void {
-  if (tray !== undefined) return
+  if (tray !== undefined) {
+    updateTrayMenu()
+    return
+  }
   const mark = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="8" fill="#1f8879"/><path d="M9 8v16M23 8v16M9 16h14" stroke="white" stroke-width="3" stroke-linecap="round"/></svg>`
   const icon = nativeImage.createFromDataURL(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(mark)}`).resize({ width: 16, height: 16 })
   if (process.platform === 'darwin') icon.setTemplateImage(true)
   tray = new Tray(icon)
-  const labels = copy(configStore.get().locale)
   tray.setToolTip('HarnessDesk')
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: labels.show, click: () => mainWindow?.show() },
-    { label: labels.harness, click: () => { void showHarness() } },
-    { type: 'separator' },
-    { label: labels.quit, click: () => { void quitApplication() } },
-  ]))
+  updateTrayMenu()
+  tray.on('click', () => {
+    if (mainWindow?.isMinimized()) mainWindow.restore()
+    mainWindow?.show()
+    mainWindow?.focus()
+  })
   tray.on('double-click', () => mainWindow?.show())
 }
 
 async function quitApplication(): Promise<void> {
   if (quitting) return
   quitting = true
+  stopAllTtsStreams()
   await runtime.stop()
   tray?.destroy()
   tray = undefined
@@ -235,27 +286,8 @@ async function quitApplication(): Promise<void> {
 async function handleWindowClose(event: Electron.Event): Promise<void> {
   if (quitting) return
   event.preventDefault()
-  const state = runtime.getState()
-  if (state.activeTurns === 0) {
-    await quitApplication()
-    return
-  }
-  const labels = copy(configStore.get().locale)
-  const result = await dialog.showMessageBox(mainWindow!, {
-    type: 'warning',
-    title: labels.runningTitle,
-    message: labels.runningMessage,
-    buttons: [labels.background, labels.stop, labels.cancel],
-    defaultId: 0,
-    cancelId: 2,
-    noLink: true,
-  })
-  if (result.response === 0) {
-    createTray()
-    mainWindow?.hide()
-  } else if (result.response === 1) {
-    await quitApplication()
-  }
+  createTray()
+  mainWindow?.hide()
 }
 
 function buildMenu(): void {
@@ -269,6 +301,7 @@ function buildMenu(): void {
         { type: 'separator' },
         { label: labels.diagnostics, click: () => { void loadShell('diagnostics') } },
         { label: labels.vision, click: () => { void loadShell('vision') } },
+        { label: labels.voice, click: () => { void loadShell('voice') } },
         { label: labels.logs, click: () => { void shell.openPath(logger.directory) } },
         { label: labels.data, click: () => { void shell.openPath(app.getPath('userData')) } },
         { label: labels.updates, click: () => { void checkForUpdates() } },
@@ -314,6 +347,7 @@ function registerIpc(): void {
     if (locale !== 'en' && locale !== 'zh-CN') throw new Error('Unsupported locale')
     const config = await configStore.update({ locale })
     buildMenu()
+    updateTrayMenu()
     return config
   })
   ipcMain.handle('desktop:set-vision-bridge', async (event, value: VisionBridgeConfig) => {
@@ -329,6 +363,77 @@ function registerIpc(): void {
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
+  })
+  ipcMain.handle('desktop:get-tts-config', event => { assertTrustedSender(event); return configStore.get().tts })
+  ipcMain.handle('desktop:set-tts-config', async (event, value: TtsConfig, apiKey?: string): Promise<DesktopConfig> => {
+    assertShellSender(event)
+    if (typeof value?.enabled !== 'boolean' || typeof value.autoPlay !== 'boolean') throw new Error('Invalid MiMo TTS settings')
+    if (!['mimo-v2.5-tts', 'mimo-v2.5-tts-voicedesign', 'mimo-v2.5-tts-voiceclone'].includes(value.model)) throw new Error('Unsupported MiMo TTS model')
+    if (value.format !== 'mp3' && value.format !== 'wav') throw new Error('Unsupported MiMo TTS audio format')
+    const endpoint = normalizeTtsEndpoint(value.endpoint)
+    if (apiKey !== undefined && apiKey.trim().length > 0) await writeMiMoCredential(app.getPath('userData'), apiKey)
+    const config = await configStore.update({
+      tts: {
+        enabled: value.enabled,
+        autoPlay: value.autoPlay,
+        endpoint,
+        model: value.model,
+        voice: value.voice.trim(),
+        style: value.style.trim(),
+        format: value.format,
+      },
+    })
+    mainWindow?.webContents.send('tts:config', config.tts)
+    return config
+  })
+  ipcMain.handle('desktop:test-tts', async (event, value: TtsConfig, apiKey?: string): Promise<TtsSynthesisResult> => {
+    assertShellSender(event)
+    return synthesizeMiMoSpeech(value, '这是 HarnessDesk 的语音测试。', app.getPath('userData'), apiKey)
+  })
+  ipcMain.handle('desktop:speak-text', async (event, text: string): Promise<TtsSynthesisResult> => {
+    assertTrustedSender(event)
+    if (typeof text !== 'string' || text.trim().length === 0) return { ok: false, error: '没有可朗读的文本' }
+    const config = configStore.get().tts
+    if (!config.enabled) return { ok: false, error: 'MiMo 语音输出尚未启用' }
+    return synthesizeMiMoSpeech(config, text, app.getPath('userData'))
+  })
+  ipcMain.handle('desktop:start-tts-stream', async (event, text: string): Promise<TtsStreamStartResult> => {
+    assertTrustedSender(event)
+    if (typeof text !== 'string' || text.trim().length === 0) return { ok: false, error: '没有可朗读的文本' }
+    const config = configStore.get().tts
+    if (!config.enabled) return { ok: false, error: 'MiMo 语音输出尚未启用' }
+    if (config.model !== 'mimo-v2.5-tts') return { ok: false, error: '当前音色模型不支持低延迟流式输出' }
+    for (const [id, stream] of ttsStreams) {
+      if (stream.ownerId === event.sender.id) {
+        stream.controller.abort()
+        ttsStreams.delete(id)
+      }
+    }
+    const streamId = randomUUID()
+    const controller = new AbortController()
+    ttsStreams.set(streamId, { ownerId: event.sender.id, controller })
+    const send = (value: Omit<TtsStreamEvent, 'streamId'>): void => {
+      if (!event.sender.isDestroyed()) event.sender.send('tts:stream', { streamId, ...value })
+    }
+    const timeout = setTimeout(() => controller.abort(), 120_000)
+    send({ type: 'started', sampleRate: 24_000 })
+    void streamMiMoSpeech(config, text, app.getPath('userData'), value => send(value), controller.signal)
+      .then(() => { if (!controller.signal.aborted) send({ type: 'ended' }) })
+      .catch(error => {
+        if (!controller.signal.aborted) send({ type: 'error', error: error instanceof Error ? error.message : String(error) })
+      })
+      .finally(() => { clearTimeout(timeout); ttsStreams.delete(streamId) })
+    return { ok: true, streamId, sampleRate: 24_000 }
+  })
+  ipcMain.handle('desktop:stop-tts-stream', (event, streamId: string): OperationResult => {
+    assertTrustedSender(event)
+    if (typeof streamId !== 'string' || streamId.length === 0) return { ok: false, error: '无效的语音流 ID' }
+    const stream = ttsStreams.get(streamId)
+    if (stream === undefined) return { ok: true }
+    if (stream.ownerId !== event.sender.id) return { ok: false, error: '无权停止该语音流' }
+    stream.controller.abort()
+    ttsStreams.delete(streamId)
+    return { ok: true }
   })
   ipcMain.handle('desktop:select-workspace', async event => {
     assertShellSender(event)
@@ -364,6 +469,7 @@ function registerIpc(): void {
   ipcMain.handle('runtime:show-harness', event => { assertShellSender(event); return showHarness() })
   ipcMain.handle('desktop:show-diagnostics', event => { assertShellSender(event); return loadShell('diagnostics') })
   ipcMain.handle('desktop:show-vision-settings', event => { assertShellSender(event); return loadShell('vision') })
+  ipcMain.handle('desktop:show-tts-settings', event => { assertShellSender(event); return loadShell('voice') })
   ipcMain.handle('desktop:get-diagnostics', (event): Diagnostics => {
     assertShellSender(event)
     return {
@@ -471,6 +577,10 @@ void app.whenReady().then(async () => {
   runtime = new RuntimeController(logger)
   runtime.events.on('state', state => {
     mainWindow?.webContents.send('runtime:state', state)
+    if (tray !== undefined) {
+      const suffix = state.activeTurns > 0 ? ` · ${state.activeTurns} active` : ''
+      tray.setToolTip(`HarnessDesk${suffix}`)
+    }
     if (previousActiveTurns > 0 && state.activeTurns === 0 && !mainWindow?.isVisible() && Notification.isSupported()) {
       new Notification({ title: 'HarnessDesk', body: copy(configStore.get().locale).completed }).show()
     }
@@ -479,4 +589,5 @@ void app.whenReady().then(async () => {
   registerIpc()
   buildMenu()
   await createMainWindow()
+  createTray()
 })

@@ -28,6 +28,16 @@ If the selected Harness model already supports images, HarnessDesk leaves the pr
 
 The bridge accepts only loopback HTTP endpoints (`127.0.0.1`, `localhost`, or `::1`). Image bytes and generated visual descriptions are not written to HarnessDesk logs. Leaving the model field blank selects the first model reported by LM Studio, so explicitly selecting a known vision model is recommended.
 
+## MiMo voice output
+
+HarnessDesk can read completed Harness answers aloud through Xiaomi MiMo TTS. Open **Settings → MiMo Voice**, enter a MiMo API Key, choose a preset voice, and enable either the speaker button or automatic playback. The default endpoint is `https://api.xiaomimimo.com/v1`; audio requests are sent from the Electron main process to MiMo's OpenAI-compatible chat completions endpoint. The key is stored separately in the application data directory and is never placed in desktop settings, the Harness prompt, or logs.
+
+The preset model is `mimo-v2.5-tts`; its speaker button uses MiMo's PCM16 streaming endpoint so playback can begin while the answer is still being synthesized. MiMo voice design and voice clone model choices are shown for compatibility, while their dedicated style editor and audio-sample picker remain reserved for a later release; those models use the non-streaming fallback.
+
+## System tray
+
+HarnessDesk keeps a system-tray icon while it is running. Closing the main window hides it from the taskbar and leaves the local Harness service and active tasks running. Click the tray icon to restore the window, or use the tray menu to open Harness, open MiMo voice settings, or exit the application.
+
 ## Development
 
 This repository contains source code only. Bundled Node.js, the pinned Harness runtime, generated installers, logs, credentials, and user data are intentionally excluded from Git.
@@ -36,6 +46,8 @@ This repository contains source code only. Bundled Node.js, the pinned Harness r
 pnpm install
 pnpm dev
 ```
+
+The development launcher first tries `127.0.0.1:5173`. If Windows reserves or blocks that port, it automatically selects an available local port and passes it to both Vite and Electron. To request a different starting port, set `HARNESSDESK_DEV_PORT` before running `pnpm dev`.
 
 Use `HARNESSDESK_NODE_PATH` to select a development Node executable. Development requires Node.js 22.19 or newer.
 
