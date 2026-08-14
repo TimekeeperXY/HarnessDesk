@@ -1,0 +1,9 @@
+{
+  "name": "@harnessdesk/dsh-desktop-vision",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "src/index.ts",
+  "files": ["lib"]
+}

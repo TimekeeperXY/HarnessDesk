@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm e2e
+
+  package-windows:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.33.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22.19.0, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm package:win
+      - run: pnpm e2e
+        env:
+          HARNESSDESK_PACKAGED_EXECUTABLE: ${{ github.workspace }}\release\win-unpacked\HarnessDesk.exe
+      - run: pnpm checksums
+      - uses: actions/upload-artifact@v4
+        with: { name: HarnessDesk-windows-x64, path: release/* }
+
+  package-macos:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: macos-14
+    strategy:
+      matrix: { arch: [arm64, x64] }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.33.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22.19.0, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm package:mac:${{ matrix.arch }}
+      - run: pnpm checksums
+      - uses: actions/upload-artifact@v4
+        with: { name: HarnessDesk-macos-${{ matrix.arch }}, path: release/* }

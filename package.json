@@ -1,0 +1,110 @@
+{
+  "name": "harnessdesk",
+  "version": "0.2.0",
+  "description": "A community desktop client for DeepSeek Harness",
+  "author": "HarnessDesk Community",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main/index.js",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@deepseek-ai/dsh-subprocess-local",
+      "@google/genai",
+      "electron",
+      "koffi",
+      "protobufjs",
+      "sharp"
+    ]
+  },
+  "scripts": {
+    "dev": "pnpm run build:bridge && concurrently -k \"vite\" \"tsc -p tsconfig.electron.json --watch --preserveWatchOutput\" \"wait-on tcp:5173 file:dist-electron/main/index.js && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "build": "pnpm run clean && pnpm run build:bridge && pnpm run build:vision && pnpm run build:electron && pnpm run build:renderer",
+    "build:bridge": "tsc -b packages/dsh-desktop-bridge/tsconfig.json --force",
+    "build:vision": "tsc -b packages/dsh-desktop-vision/tsconfig.json --force",
+    "build:electron": "tsc -b tsconfig.electron.json --force",
+    "build:renderer": "vite build",
+    "clean": "node scripts/clean.mjs",
+    "typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.renderer.json --noEmit && tsc -p packages/dsh-desktop-bridge/tsconfig.json --noEmit && tsc -p packages/dsh-desktop-vision/tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:smoke": "pnpm run build && node scripts/smoke-runtime.mjs",
+    "test:vision": "pnpm run build:vision && node scripts/smoke-vision.mjs test-results/onboarding.png",
+    "test:watch": "vitest",
+    "prepare:runtime": "node scripts/prepare-runtime.mjs",
+    "prepare:icons": "node scripts/prepare-icons.mjs",
+    "checksums": "node scripts/checksums.mjs",
+    "package": "pnpm run build && pnpm run prepare:icons && pnpm run prepare:runtime && electron-builder --dir",
+    "package:win": "pnpm run build && pnpm run prepare:icons && pnpm run prepare:runtime -- --platform win32 --arch x64 && electron-builder --win nsis --x64",
+    "package:mac:arm64": "pnpm run build && pnpm run prepare:icons && pnpm run prepare:runtime -- --platform darwin --arch arm64 && electron-builder --mac dmg zip --arm64",
+    "package:mac:x64": "pnpm run build && pnpm run prepare:icons && pnpm run prepare:runtime -- --platform darwin --arch x64 && electron-builder --mac dmg zip --x64",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@harnessdesk/dsh-desktop-vision": "workspace:*",
+    "electron-updater": "6.8.9",
+    "tar": "7.5.22",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "@harnessdesk/dsh-desktop-bridge": "workspace:*",
+    "@phosphor-icons/react": "2.1.10",
+    "@playwright/test": "1.62.1",
+    "@types/node": "26.2.0",
+    "@types/react": "18.3.28",
+    "@types/react-dom": "18.3.7",
+    "@vitejs/plugin-react": "6.0.5",
+    "concurrently": "9.2.1",
+    "cross-env": "10.1.0",
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3",
+    "extract-zip": "2.0.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "sharp": "0.35.3",
+    "typescript": "7.0.2",
+    "vite": "8.2.1",
+    "vitest": "4.1.10",
+    "wait-on": "9.0.4"
+  },
+  "build": {
+    "appId": "community.harnessdesk.app",
+    "productName": "HarnessDesk",
+    "artifactName": "HarnessDesk-${version}-${os}-${arch}.${ext}",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/runtime-bundle",
+        "to": "runtime-bundle",
+        "filter": ["runtime.tar.gz", "manifest.json"]
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "icon": "build/icon.png",
+      "target": ["nsis"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "icon": "build/icon.png",
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "target": ["dmg", "zip"]
+    }
+  }
+}
